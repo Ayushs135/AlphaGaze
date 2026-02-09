@@ -9,3 +9,7 @@ time-series analysis with sentiment-aware NLP to model market volatility.
 - yfinance
 - BERT / FinBERT
 - Jupyter Notebook
+
+
+## Link for dataset
+Dataset {https://zenodo.org/records/16991843}
