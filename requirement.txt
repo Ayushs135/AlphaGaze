@@ -1,0 +1,22 @@
+python>=3.9
+
+# Core data & plotting
+numpy
+pandas
+matplotlib
+seaborn
+
+# Time-series forecasting
+prophet
+yfinance
+
+# NLP & Sentiment Analysis
+torch
+transformers
+
+# Explainability
+shap
+
+# Jupyter environment
+notebook
+ipykernel
