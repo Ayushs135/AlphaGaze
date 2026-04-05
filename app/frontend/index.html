@@ -48,14 +48,38 @@
     a:hover { color: var(--text); }
     .chart-wrap { position: relative; height: 220px; }
     .shap-wrap  { position: relative; height: 260px; }
+    .forecast-wrap { position: relative; height: 320px; }
+    .sensitivity-wrap { position: relative; height: 260px; }
+    /* Attention heatmap styles */
+    .attn-headline { margin-bottom: 1rem; padding-bottom: .75rem; border-bottom: 1px solid var(--border); }
+    .attn-headline:last-child { border-bottom: none; }
+    .attn-tokens { line-height: 2; font-size: .92rem; }
+    .attn-token {
+      display: inline-block; padding: 2px 4px; margin: 1px; border-radius: 3px;
+      cursor: default; transition: transform .1s;
+    }
+    .attn-token:hover { transform: scale(1.1); }
+    .attn-sent-label { font-size: .75rem; margin-bottom: .35rem; }
+    .attn-legend { display: flex; gap: .5rem; align-items: center; font-size: .72rem; color: var(--muted); margin-bottom: .5rem; }
+    .attn-legend-box { width: 60px; height: 12px; border-radius: 3px; }
+    .attn-keywords { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .8rem; }
+    .attn-keyword {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: .2rem .55rem;
+      font-size: .72rem;
+      background: rgba(88,166,255,.08);
+      color: var(--text);
+    }
+    .attn-meta { color: var(--muted); font-size: .72rem; margin-bottom: .35rem; }
   </style>
 </head>
 <body>
 
 <nav class="border-bottom mb-4" style="border-color: var(--border) !important; background: var(--card);">
   <div class="container-xl py-3 d-flex align-items-center gap-3">
-    <span style="font-size:1.4rem; font-weight:700; color: var(--accent);">📈 StockSignal</span>
-    <span class="ms-2" style="color:var(--muted); font-size:.85rem;">Prophet · FinBERT · XAI</span>
+    <span style="font-size:1.4rem; font-weight:700; color: var(--accent);">📈 AlphaGaze</span>
+    <span class="ms-2" style="color:var(--muted); font-size:.85rem;">Prophet · FinBERT ·9 XAI</span>
   </div>
 </nav>
 
@@ -114,9 +138,31 @@
       </div>
     </div>
 
-    <!-- Row 2: SHAP + News -->
-    <div class="row g-4">
-      <div class="col-md-5">
+    <!-- Row 2: Forecast Chart -->
+    <div class="row g-4 mb-4">
+      <div class="col-12">
+        <div class="card p-4">
+          <div class="section-title">Prophet Forecast — Historical + Predicted</div>
+          <div class="forecast-wrap">
+            <canvas id="forecastChart"></canvas>
+          </div>
+          <p class="f1-note mt-2">Solid blue = actual close price · Dashed orange = Prophet forecast · Shaded area = confidence band</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 3: Prophet Sensitivity (GradCAM) + SHAP -->
+    <div class="row g-4 mb-4">
+      <div class="col-md-6">
+        <div class="card p-4 h-100">
+          <div class="section-title">Prophet GradCAM — Temporal Sensitivity</div>
+          <div class="sensitivity-wrap">
+            <canvas id="sensitivityChart"></canvas>
+          </div>
+          <p class="f1-note mt-2">Higher bars = that time window had more influence on the forecast.<br>Based on perturbation analysis of historical segments.</p>
+        </div>
+      </div>
+      <div class="col-md-6">
         <div class="card p-4 h-100">
           <div class="section-title">SHAP — Feature Impact on Prediction</div>
           <div class="shap-wrap">
@@ -125,13 +171,44 @@
           <p class="f1-note mt-2">Positive SHAP = pushes toward predicted signal.<br>Negative SHAP = pushes against it.</p>
         </div>
       </div>
-      <div class="col-md-7">
+    </div>
+
+    <!-- Row 4: Attention Maps + News -->
+    <div class="row g-4 mb-4">
+      <div class="col-md-6">
+        <div class="card p-4 h-100">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <div class="section-title mb-0">FinBERT Attention Maps</div>
+          </div>
+          <div class="attn-legend">
+            <span>Low attention</span>
+            <div class="attn-legend-box" style="background: linear-gradient(to right, rgba(88,166,255,0.1), rgba(88,166,255,0.5), rgba(248,81,73,0.9));"></div>
+            <span>High attention</span>
+          </div>
+          <div class="section-title" style="font-size:.72rem; letter-spacing:1px;">Top Attention Keywords</div>
+          <div id="attentionKeywords" class="attn-keywords"></div>
+          <div id="attentionMaps" style="max-height: 500px; overflow-y: auto;"></div>
+          <p class="f1-note mt-2">Highlighted words = tokens BERT attended to most when scoring sentiment.<br>Brighter = higher attention weight from the [CLS] token.</p>
+        </div>
+      </div>
+      <div class="col-md-6">
         <div class="card p-4 h-100">
           <div class="d-flex justify-content-between align-items-center mb-2">
             <div class="section-title mb-0">Latest News</div>
             <small style="color:var(--muted);">Sentiment: <span class="sent-pos">■ positive</span> <span class="sent-neg">■ negative</span></small>
           </div>
-          <div id="newsList" style="max-height:400px; overflow-y:auto;"></div>
+          <div id="newsList" style="max-height:500px; overflow-y:auto;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 5: Changepoints -->
+    <div class="row g-4">
+      <div class="col-12">
+        <div class="card p-4">
+          <div class="section-title">Prophet Detected Changepoints</div>
+          <div id="changepointsList" class="row g-2"></div>
+          <p class="f1-note mt-2">Dates where Prophet detected significant trend shifts. Larger magnitude = sharper change in trend direction.</p>
         </div>
       </div>
     </div>
@@ -148,6 +225,8 @@ const API = '';   // same origin
 
 let probaChartInstance = null;
 let shapChartInstance  = null;
+let forecastChartInstance = null;
+let sensitivityChartInstance = null;
 
 // ── Load stock list ──────────────────────────────────────────────────────────
 async function loadStocks() {
@@ -221,7 +300,7 @@ function renderResults(d) {
       <div class="stat-value">${s.value}</div>
     </div>`).join('');
 
-  // Probability doughnut → horizontal bar
+  // Probability bar chart
   const proba    = d.probabilities;
   const classes  = Object.keys(proba).sort();
   const vals     = classes.map(c => +(proba[c] * 100).toFixed(1));
@@ -270,6 +349,19 @@ function renderResults(d) {
     }
   });
 
+  // ── Forecast Chart ───────────────────────────────────────────────────────
+  renderForecastChart(d.prophet_sensitivity?.forecast_chart);
+
+  // ── Prophet Sensitivity (GradCAM) Chart ──────────────────────────────────
+  renderSensitivityChart(d.prophet_sensitivity?.segments);
+
+  // ── Attention Maps ───────────────────────────────────────────────────────
+  renderAttentionKeywords(d.attention_keywords);
+  renderAttentionMaps(d.attention_maps);
+
+  // ── Changepoints ─────────────────────────────────────────────────────────
+  renderChangepoints(d.prophet_sensitivity?.changepoints);
+
   // News feed
   const newsList = document.getElementById('newsList');
   newsList.innerHTML = (d.news || []).map(n => {
@@ -285,6 +377,206 @@ function renderResults(d) {
       </div>
     </div>`;
   }).join('') || '<p style="color:var(--muted);">No news articles loaded.</p>';
+}
+
+// ── Forecast Chart ─────────────────────────────────────────────────────────
+function renderForecastChart(fc) {
+  if (forecastChartInstance) forecastChartInstance.destroy();
+  if (!fc) return;
+
+  // Downsample for performance: show every Nth point
+  const step = Math.max(1, Math.floor(fc.dates.length / 200));
+  const dates   = fc.dates.filter((_,i) => i % step === 0 || i >= fc.dates.length - 30);
+  const actual  = fc.actual.filter((_,i) => i % step === 0 || i >= fc.actual.length - 30);
+  const yhat    = fc.yhat.filter((_,i) => i % step === 0 || i >= fc.yhat.length - 30);
+  const upper   = fc.yhat_upper.filter((_,i) => i % step === 0 || i >= fc.yhat_upper.length - 30);
+  const lower   = fc.yhat_lower.filter((_,i) => i % step === 0 || i >= fc.yhat_lower.length - 30);
+
+  forecastChartInstance = new Chart(document.getElementById('forecastChart'), {
+    type: 'line',
+    data: {
+      labels: dates,
+      datasets: [
+        {
+          label: 'Actual Close',
+          data: actual,
+          borderColor: '#58a6ff',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.1,
+          order: 1,
+        },
+        {
+          label: 'Prophet Forecast',
+          data: yhat,
+          borderColor: '#d29922',
+          borderDash: [6, 3],
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.1,
+          order: 2,
+        },
+        {
+          label: 'Confidence Upper',
+          data: upper,
+          borderColor: 'transparent',
+          backgroundColor: 'rgba(210,153,34,0.12)',
+          fill: '+1',
+          pointRadius: 0,
+          order: 3,
+        },
+        {
+          label: 'Confidence Lower',
+          data: lower,
+          borderColor: 'transparent',
+          backgroundColor: 'rgba(210,153,34,0.12)',
+          fill: '-1',
+          pointRadius: 0,
+          order: 4,
+        },
+      ],
+    },
+    options: {
+      plugins: {
+        legend: { labels: { color: '#e6edf3', usePointStyle: true, padding: 16, font: { size: 11 } },
+                  position: 'top' },
+        tooltip: { mode: 'index', intersect: false,
+                   callbacks: { label: ctx => ` ${ctx.dataset.label}: ₹${num(ctx.parsed.y)}` } },
+      },
+      scales: {
+        x: { ticks: { color: '#8b949e', maxTicksLimit: 12, maxRotation: 0 }, grid: { color: '#30363d' } },
+        y: { ticks: { color: '#8b949e', callback: v => '₹' + num(v) }, grid: { color: '#30363d' } },
+      },
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      maintainAspectRatio: false,
+    }
+  });
+}
+
+// ── Prophet Sensitivity Chart ──────────────────────────────────────────────
+function renderSensitivityChart(segments) {
+  if (sensitivityChartInstance) sensitivityChartInstance.destroy();
+  if (!segments || segments.length === 0) return;
+
+  const labels = segments.map(s => {
+    const start = s.start.slice(5); // MM-DD
+    const end   = s.end.slice(5);
+    return `${start} → ${end}`;
+  });
+  const data   = segments.map(s => s.sensitivity);
+  const bgColors = data.map(v => {
+    const intensity = 0.3 + v * 0.7; // scale 0.3-1.0
+    return `rgba(248, 81, 73, ${intensity.toFixed(2)})`;
+  });
+
+  sensitivityChartInstance = new Chart(document.getElementById('sensitivityChart'), {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Sensitivity',
+        data: data,
+        backgroundColor: bgColors,
+        borderColor: bgColors.map(c => c.replace(/[\d.]+\)$/, '1)')),
+        borderWidth: 1,
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ` Sensitivity: ${(ctx.parsed.y * 100).toFixed(1)}%` } },
+      },
+      scales: {
+        x: { ticks: { color: '#8b949e', maxRotation: 45, font: { size: 10 } }, grid: { display: false } },
+        y: { max: 1, ticks: { color: '#8b949e', callback: v => (v * 100).toFixed(0) + '%' }, grid: { color: '#30363d' } },
+      },
+      maintainAspectRatio: false,
+    }
+  });
+}
+
+// ── Attention Maps ─────────────────────────────────────────────────────────
+function renderAttentionMaps(maps) {
+  const container = document.getElementById('attentionMaps');
+  if (!maps || maps.length === 0) {
+    container.innerHTML = '<p style="color:var(--muted);">No attention map data available.</p>';
+    return;
+  }
+
+  container.innerHTML = maps.map(m => {
+    const sentCls = m.sentiment > 0.1 ? 'sent-pos' : m.sentiment < -0.1 ? 'sent-neg' : 'sent-neu';
+    const sentSign = m.sentiment > 0 ? '+' : '';
+    const unkRatio = typeof m.unk_ratio === 'number' ? (m.unk_ratio * 100).toFixed(1) : null;
+    const tokenCount = typeof m.token_count === 'number' ? m.token_count : null;
+
+    const tokensHtml = m.tokens.map((tok, i) => {
+      const attn = m.attention[i] || 0;
+      // Color: low attention = subtle blue, high attention = bright red-orange
+      let bg, textColor;
+      if (attn < 0.4) {
+        const a = 0.05 + attn * 0.3;
+        bg = `rgba(88, 166, 255, ${a.toFixed(2)})`;
+        textColor = '#e6edf3';
+      } else if (attn < 0.7) {
+        const a = 0.3 + (attn - 0.4) * 1.5;
+        bg = `rgba(210, 153, 34, ${a.toFixed(2)})`;
+        textColor = '#fff';
+      } else {
+        const a = 0.5 + (attn - 0.7) * 1.5;
+        bg = `rgba(248, 81, 73, ${Math.min(a, 0.95).toFixed(2)})`;
+        textColor = '#fff';
+      }
+      return `<span class="attn-token" style="background:${bg};color:${textColor};" title="Attention: ${(attn * 100).toFixed(1)}%">${escHtml(tok)}</span>`;
+    }).join('');
+
+    return `<div class="attn-headline">
+      <div class="attn-sent-label ${sentCls}">Sentiment: ${sentSign}${m.sentiment.toFixed(4)}</div>
+      <div class="attn-meta">Tokens shown: ${tokenCount ?? 'n/a'} · UNK ratio: ${unkRatio ?? 'n/a'}%</div>
+      <div class="attn-tokens">${tokensHtml}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderAttentionKeywords(items) {
+  const container = document.getElementById('attentionKeywords');
+  if (!items || items.length === 0) {
+    container.innerHTML = '<span style="color:var(--muted); font-size:.72rem;">No keyword summary available.</span>';
+    return;
+  }
+
+  container.innerHTML = items.map(k => {
+    const weight = (k.avg_attention * 100).toFixed(1);
+    return `<span class="attn-keyword" title="Avg attention ${weight}% · mentions ${k.mentions}">${escHtml(k.token)} · ${weight}%</span>`;
+  }).join('');
+}
+
+// ── Changepoints ───────────────────────────────────────────────────────────
+function renderChangepoints(cps) {
+  const container = document.getElementById('changepointsList');
+  if (!cps || cps.length === 0) {
+    container.innerHTML = '<p class="col-12" style="color:var(--muted);">No changepoints detected.</p>';
+    return;
+  }
+
+  container.innerHTML = cps.slice(0, 8).map(cp => {
+    const magnitude = cp.magnitude;
+    const maxMag = Math.max(...cps.map(c => c.magnitude));
+    const pct = maxMag > 0 ? (magnitude / maxMag * 100) : 0;
+    return `<div class="col-md-3 col-6">
+      <div class="card p-2" style="background:rgba(88,166,255,0.06); border-color: var(--border);">
+        <div class="stat-label">${cp.date}</div>
+        <div style="margin-top:4px;">
+          <div style="background:rgba(88,166,255,0.15); border-radius:4px; height:8px; width:100%;">
+            <div style="background:var(--accent); border-radius:4px; height:8px; width:${pct}%;"></div>
+          </div>
+        </div>
+        <div style="font-size:.72rem; color:var(--muted); margin-top:2px;">Δ ${magnitude.toFixed(4)}</div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

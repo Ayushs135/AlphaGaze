@@ -35,7 +35,8 @@ def run_sentiment_analysis():
 
     print("Loading news dataset...")
     # Load JSON dataset
-    news_df = pd.read_json("data/IN-FINews Dataset.json")
+    data_path = os.path.join(os.path.dirname(__file__), "..", "data", "IN-FINews Dataset.json")
+    news_df = pd.read_json(data_path)
 
     # Keep only Date and Title
     news_df = news_df[["Date", "Title"]]

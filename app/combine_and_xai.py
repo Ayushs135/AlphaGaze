@@ -64,13 +64,13 @@ def build_features(merged: pd.DataFrame) -> pd.DataFrame:
     Engineer features from the merged Prophet + FinBERT + price DataFrame.
 
     Features:
-        prophet_gap       – (yhat - actual) / actual  (relative prophet error)
-        forecast_band     – (yhat_upper - yhat_lower) / actual  (normalised band width)
-        sentiment_1d      – raw FinBERT daily score (positive - negative)
-        sentiment_3d_ma   – 3-day rolling mean of sentiment
-        sentiment_5d_ma   – 5-day rolling mean of sentiment
-        price_momentum_5d – 5-day price return
-        volatility_5d     – 5-day rolling std of daily returns
+        prophet_gap        (yhat - actual) / actual  (relative prophet error)
+        forecast_band      (yhat_upper - yhat_lower) / actual  (normalised band width)
+        sentiment_1d       raw FinBERT daily score (positive - negative)
+        sentiment_3d_ma    3-day rolling mean of sentiment
+        sentiment_5d_ma    5-day rolling mean of sentiment
+        price_momentum_5d  5-day price return
+        volatility_5d      5-day rolling std of daily returns
     """
     df = merged.sort_values("ds").reset_index(drop=True).copy()
     df["daily_ret"]         = df["y"].pct_change()

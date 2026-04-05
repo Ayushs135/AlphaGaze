@@ -64,6 +64,8 @@ SUPPORTED_STOCKS = {
 _finbert_tokenizer = None
 _finbert_model     = None
 
+SPECIAL_TOKENS = {"[CLS]", "[SEP]", "[PAD]", "[UNK]"}
+
 
 def _load_finbert():
     global _finbert_tokenizer, _finbert_model
@@ -71,7 +73,8 @@ def _load_finbert():
         print("[predictor] Loading FinBERT model …")
         _finbert_tokenizer = BertTokenizer.from_pretrained("yiyanghkust/finbert-tone")
         _finbert_model     = BertForSequenceClassification.from_pretrained(
-            "yiyanghkust/finbert-tone"
+            "yiyanghkust/finbert-tone",
+            attn_implementation="eager",  # required for output_attentions=True
         )
         _finbert_model.eval()
         print("[predictor] FinBERT ready.")
@@ -91,6 +94,249 @@ def _score_headlines(headlines: list[str], batch_size: int = 32) -> list[float]:
             probs = torch.softmax(_finbert_model(**inputs).logits, dim=-1)
         scores.extend((probs[:, 1] - probs[:, 2]).tolist())  # positive - negative
     return scores
+
+
+def _is_noise_token(token: str) -> bool:
+    """Return True for tokens that should not drive attention visualization."""
+    if token in SPECIAL_TOKENS:
+        return True
+    if not token or token.strip() == "":
+        return True
+    # Drop punctuation-only pieces after subword merge.
+    return all(not ch.isalnum() for ch in token)
+
+
+def _aggregate_attention_keywords(attention_maps: list[dict], top_k: int = 12) -> list[dict]:
+    """Build an attention-weighted keyword summary across headlines."""
+    scores: dict[str, dict] = {}
+    for item in attention_maps:
+        for tok, attn in zip(item.get("tokens", []), item.get("attention", [])):
+            token = str(tok).lower().strip()
+            if _is_noise_token(token):
+                continue
+            entry = scores.setdefault(token, {"sum": 0.0, "count": 0})
+            entry["sum"] += float(attn)
+            entry["count"] += 1
+
+    ranked = sorted(
+        (
+            {
+                "token": token,
+                "avg_attention": round(values["sum"] / values["count"], 4),
+                "mentions": values["count"],
+            }
+            for token, values in scores.items()
+            if values["count"] > 0
+        ),
+        key=lambda x: (x["avg_attention"], x["mentions"]),
+        reverse=True,
+    )
+    return ranked[:top_k]
+
+
+def _get_attention_maps(headlines: list[str], max_headlines: int = 5) -> list[dict]:
+    """
+    Extract attention maps from FinBERT for the given headlines.
+
+    For each headline, returns token-level attention weights averaged
+    across all attention heads in the last layer. This shows which
+    words BERT 'attended to' most when making sentiment decisions.
+
+    Returns
+    -------
+    list of {"headline": str, "tokens": list[str],
+             "attention": list[float], "sentiment": float,
+             "token_count": int, "unk_ratio": float}
+    """
+    _load_finbert()
+    results = []
+    for text in headlines[:max_headlines]:
+        inputs = _finbert_tokenizer(
+            text, return_tensors="pt",
+            padding=True, truncation=True, max_length=128,
+        )
+        with torch.no_grad():
+            outputs = _finbert_model(
+                **inputs, output_attentions=True
+            )
+
+        probs = torch.softmax(outputs.logits, dim=-1)
+        sentiment = float((probs[0, 1] - probs[0, 2]).item())
+
+        # outputs.attentions is a tuple of (batch, heads, seq, seq)
+        # Take the last layer, average across all heads
+        last_layer_attn = outputs.attentions[-1]           # (1, heads, seq, seq)
+        # Average over heads → (1, seq, seq)
+        avg_attn = last_layer_attn.mean(dim=1).squeeze(0)  # (seq, seq)
+
+        # CLS token's attention to all other tokens (row 0)
+        cls_attn = avg_attn[0].cpu().numpy()               # (seq,)
+
+        # Get tokens
+        token_ids = inputs["input_ids"][0]
+        tokens = _finbert_tokenizer.convert_ids_to_tokens(token_ids)
+
+        # Attention mask to ignore padding
+        attn_mask = inputs["attention_mask"][0].cpu().numpy()
+
+        total_nonpad = int(attn_mask.sum())
+        unk_count = sum(1 for tok, mask_val in zip(tokens, attn_mask) if mask_val == 1 and tok == "[UNK]")
+
+        # Merge subword tokens and their attention scores.
+        # We keep the strongest sub-piece attention per merged token.
+        merged_tokens = []
+        merged_attn = []
+        for tok, attn_val, mask_val in zip(tokens, cls_attn, attn_mask):
+            if mask_val == 0:
+                continue
+            if tok in SPECIAL_TOKENS:
+                continue
+            if tok.startswith("##") and merged_tokens:
+                merged_tokens[-1] += tok[2:]
+                merged_attn[-1] = max(merged_attn[-1], float(attn_val))
+            else:
+                merged_tokens.append(tok)
+                merged_attn.append(float(attn_val))
+
+        # Remove punctuation/noise tokens to reduce visual artifacts.
+        filtered_tokens = []
+        filtered_attn = []
+        for tok, attn_val in zip(merged_tokens, merged_attn):
+            if _is_noise_token(tok):
+                continue
+            filtered_tokens.append(tok)
+            filtered_attn.append(attn_val)
+
+        # Normalize attention scores to 0-1 range
+        if filtered_attn:
+            max_a = max(filtered_attn)
+            min_a = min(filtered_attn)
+            rng = max_a - min_a if max_a != min_a else 1.0
+            filtered_attn = [(a - min_a) / rng for a in filtered_attn]
+
+        results.append({
+            "headline": text,
+            "tokens": filtered_tokens,
+            "attention": [round(a, 4) for a in filtered_attn],
+            "sentiment": round(sentiment, 4),
+            "token_count": len(filtered_tokens),
+            "unk_ratio": round((unk_count / total_nonpad) if total_nonpad > 0 else 0.0, 4),
+        })
+
+    return results
+
+
+def _prophet_sensitivity(prices_df: pd.DataFrame, prophet_model,
+                          forecast_df: pd.DataFrame,
+                          n_segments: int = 10) -> dict:
+    """
+    GradCAM-like sensitivity analysis for Prophet.
+
+    Divides the historical price series into `n_segments` time windows
+    and measures how much the forecast changes when each segment is
+    perturbed. Higher sensitivity = that time window had more influence
+    on the final forecast.
+
+    Also extracts Prophet changepoints and trend decomposition.
+
+    Returns
+    -------
+    dict with:
+      - segments: list of {start, end, sensitivity}
+      - changepoints: list of {date, magnitude}
+      - forecast_chart: {dates, actual, yhat, yhat_lower, yhat_upper}
+    """
+    import copy
+
+    df = prices_df.copy().sort_values("ds").reset_index(drop=True)
+    n = len(df)
+    seg_size = max(n // n_segments, 1)
+
+    # Baseline: mean of yhat for the last 30 forecast days
+    future_mask = forecast_df["ds"] > df["ds"].max()
+    future_forecast = forecast_df[future_mask]
+    baseline_yhat = future_forecast["yhat"].mean() if len(future_forecast) > 0 else forecast_df["yhat"].iloc[-1]
+
+    segments = []
+    for i in range(n_segments):
+        start_idx = i * seg_size
+        end_idx = min((i + 1) * seg_size, n)
+        if start_idx >= n:
+            break
+
+        # Perturb this segment: add 2% noise
+        perturbed = df.copy()
+        noise_std = perturbed["y"].iloc[start_idx:end_idx].std() * 0.1
+        if noise_std == 0 or pd.isna(noise_std):
+            noise_std = perturbed["y"].mean() * 0.02
+        np.random.seed(42 + i)
+        noise = np.random.normal(0, noise_std, end_idx - start_idx)
+        perturbed.loc[start_idx:end_idx - 1, "y"] = (
+            perturbed.loc[start_idx:end_idx - 1, "y"].values + noise
+        )
+
+        # Re-fit Prophet on perturbed data
+        try:
+            m_pert = Prophet(
+                daily_seasonality=False,
+                weekly_seasonality=True,
+                yearly_seasonality=True,
+            )
+            m_pert.fit(perturbed[["ds", "y"]])
+            future_pert = m_pert.make_future_dataframe(periods=30)
+            fc_pert = m_pert.predict(future_pert)
+            future_pert_mask = fc_pert["ds"] > df["ds"].max()
+            perturbed_yhat = fc_pert[future_pert_mask]["yhat"].mean()
+            sensitivity = abs(perturbed_yhat - baseline_yhat) / abs(baseline_yhat) if baseline_yhat != 0 else 0
+        except Exception:
+            sensitivity = 0.0
+
+        segments.append({
+            "start": str(df.iloc[start_idx]["ds"].date()),
+            "end": str(df.iloc[min(end_idx - 1, n - 1)]["ds"].date()),
+            "sensitivity": round(float(sensitivity), 6),
+        })
+
+    # Normalize sensitivities to 0-1 range
+    max_sens = max((s["sensitivity"] for s in segments), default=1)
+    if max_sens > 0:
+        for s in segments:
+            s["sensitivity"] = round(s["sensitivity"] / max_sens, 4)
+
+    # Extract changepoints
+    changepoints_data = []
+    if hasattr(prophet_model, "changepoints") and prophet_model.changepoints is not None:
+        cps = prophet_model.changepoints
+        if hasattr(prophet_model, "params") and "delta" in prophet_model.params:
+            deltas = prophet_model.params["delta"].flatten()
+            for cp, delta in zip(cps, deltas):
+                changepoints_data.append({
+                    "date": str(cp.date()),
+                    "magnitude": round(float(abs(delta)), 6),
+                })
+            # Sort by magnitude descending
+            changepoints_data.sort(key=lambda x: x["magnitude"], reverse=True)
+
+    # Build forecast chart data
+    # Merge actual prices with forecast
+    chart_merged = pd.merge(
+        df[["ds", "y"]], forecast_df[["ds", "yhat", "yhat_lower", "yhat_upper"]],
+        on="ds", how="outer"
+    ).sort_values("ds")
+
+    forecast_chart = {
+        "dates": [str(d.date()) for d in chart_merged["ds"]],
+        "actual": [round(float(v), 2) if pd.notna(v) else None for v in chart_merged["y"]],
+        "yhat": [round(float(v), 2) for v in chart_merged["yhat"]],
+        "yhat_lower": [round(float(v), 2) for v in chart_merged["yhat_lower"]],
+        "yhat_upper": [round(float(v), 2) for v in chart_merged["yhat_upper"]],
+    }
+
+    return {
+        "segments": segments,
+        "changepoints": changepoints_data[:10],  # top 10
+        "forecast_chart": forecast_chart,
+    }
 
 
 # ── In-memory cache ──────────────────────────────────────────────────────────
@@ -252,6 +498,18 @@ def predict(symbol: str) -> dict:
     latest_sent   = float(merged.iloc[-1]["sentiment_1d"])
     latest_date   = str(merged.iloc[-1]["ds"].date())
 
+    # ── 7. BERT Attention maps for top headlines ─────────────────────────────
+    # Pick the most impactful headlines (highest abs sentiment)
+    sent_articles = sorted(articles, key=lambda a: abs(a.get("sentiment", 0)), reverse=True)
+    top_headlines = [a["title"] for a in sent_articles[:8]]
+    print(f"[predictor] {symbol}: extracting attention maps for {len(top_headlines)} headlines …")
+    attention_maps = _get_attention_maps(top_headlines, max_headlines=8)
+    attention_keywords = _aggregate_attention_keywords(attention_maps, top_k=12)
+
+    # ── 8. Prophet GradCAM-like sensitivity analysis ─────────────────────────
+    print(f"[predictor] {symbol}: running Prophet sensitivity analysis …")
+    prophet_sensitivity = _prophet_sensitivity(prices, m, forecast, n_segments=10)
+
     result = {
         "symbol":        symbol,
         "name":          SUPPORTED_STOCKS.get(symbol, symbol),
@@ -263,7 +521,10 @@ def predict(symbol: str) -> dict:
         "probabilities": proba_dict,
         "shap_values":   shap_dict,
         "cv_weighted_f1": cv_f1,
-        "news":          articles[:20],   # top 20 newest for display
+        "news":          articles[:20],
+        "attention_maps": attention_maps,
+        "attention_keywords": attention_keywords,
+        "prophet_sensitivity": prophet_sensitivity,
     }
 
     # Store in cache
