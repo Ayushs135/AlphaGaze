@@ -33,7 +33,7 @@
     .signal-HOLD { background: rgba(210,153,34,.12); border: 2px solid var(--hold); color: var(--hold); }
     .signal-SELL { background: rgba(248,81,73,.12); border: 2px solid var(--sell); color: var(--sell); }
     .stat-label  { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
-    .stat-value  { font-size: 1.3rem; font-weight: 600; }
+    .stat-value  { font-size: 1.3rem; font-weight: 600; color: var(--text); }
     .news-item   { border-bottom: 1px solid var(--border); padding: .6rem 0; }
     .news-item:last-child { border-bottom: none; }
     .sent-pos { color: var(--buy); }
@@ -72,6 +72,110 @@
       color: var(--text);
     }
     .attn-meta { color: var(--muted); font-size: .72rem; margin-bottom: .35rem; }
+    .uncertainty-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: .65rem .75rem;
+      margin-top: .75rem;
+      background: rgba(88,166,255,.05);
+    }
+    .uncertainty-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: .5rem;
+      font-size: .78rem;
+      color: var(--muted);
+    }
+    .uncertainty-badge {
+      border-radius: 999px;
+      padding: .15rem .55rem;
+      font-size: .7rem;
+      font-weight: 700;
+      letter-spacing: .4px;
+    }
+    .uncertainty-trade { background: rgba(63,185,80,.22); color: #9bf2a8; }
+    .uncertainty-caution { background: rgba(210,153,34,.22); color: #ffd98a; }
+    .uncertainty-no-trade { background: rgba(248,81,73,.22); color: #ffb0aa; }
+    .uncertainty-bar {
+      width: 100%;
+      height: 8px;
+      background: rgba(255,255,255,.08);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: .45rem;
+    }
+    .uncertainty-bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width .25s ease;
+    }
+    .counterfact-item {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: .65rem .75rem;
+      margin-bottom: .55rem;
+      background: rgba(248,81,73,.06);
+    }
+    .counterfact-item:last-child { margin-bottom: 0; }
+    .counterfact-title { font-size: .82rem; color: var(--text); margin-bottom: .3rem; }
+    .counterfact-sub { font-size: .74rem; color: var(--muted); }
+    .delta-pos { color: var(--buy); }
+    .delta-neg { color: var(--sell); }
+    .backtest-metric-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: .6rem;
+      margin-bottom: .7rem;
+    }
+    .backtest-metric {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: .45rem .55rem;
+      background: rgba(88,166,255,.06);
+    }
+    .backtest-metric .k { font-size: .68rem; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+    .backtest-metric .v { font-size: .95rem; font-weight: 700; }
+    .bucket-row { margin-bottom: .45rem; }
+    .bucket-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: .73rem;
+      color: var(--muted);
+      margin-bottom: .2rem;
+    }
+    .bucket-track {
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      overflow: hidden;
+    }
+    .bucket-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, rgba(88,166,255,.65), rgba(63,185,80,.85));
+    }
+    .backtest-table-wrap {
+      max-height: 240px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: .65rem;
+    }
+    .backtest-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .74rem;
+      color: var(--text);
+    }
+    .backtest-table th, .backtest-table td {
+      padding: .35rem .5rem;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .backtest-table th { color: var(--muted); font-weight: 600; }
+    .backtest-table td { color: var(--text); }
   </style>
 </head>
 <body>
@@ -121,6 +225,7 @@
         <div class="card p-4 h-100">
           <div class="section-title">Trade Signal</div>
           <div id="signalBox" class="signal-box">—</div>
+          <div id="uncertaintyBox" class="uncertainty-card"></div>
           <div class="row text-center mt-2 g-2" id="probRow"></div>
           <div class="mt-3 f1-note" id="f1Note"></div>
         </div>
@@ -203,6 +308,24 @@
     </div>
 
     <!-- Row 5: Changepoints -->
+    <div class="row g-4 mb-4">
+      <div class="col-md-7">
+        <div class="card p-4 h-100">
+          <div class="section-title">Rolling Backtest Dashboard</div>
+          <div id="backtestPanel"></div>
+          <p class="f1-note mt-2">Walk-forward simulation: each date is predicted using only prior history. Accuracy improves in higher confidence buckets if calibration is healthy.</p>
+        </div>
+      </div>
+      <div class="col-md-5">
+        <div class="card p-4 h-100">
+          <div class="section-title">Counterfactual Headline Tests</div>
+          <div id="counterfactualPanel"></div>
+          <p class="f1-note mt-2">Counterfactual removes the most-attended token from a headline and re-scores sentiment. Larger delta = stronger causal contribution.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 6: Changepoints -->
     <div class="row g-4">
       <div class="col-12">
         <div class="card p-4">
@@ -280,6 +403,7 @@ function renderResults(d) {
   const box = document.getElementById('signalBox');
   box.textContent = sig;
   box.className = `signal-box signal-${sig}`;
+  renderUncertainty(d.uncertainty);
 
   // F1 note
   document.getElementById('f1Note').textContent =
@@ -358,6 +482,10 @@ function renderResults(d) {
   // ── Attention Maps ───────────────────────────────────────────────────────
   renderAttentionKeywords(d.attention_keywords);
   renderAttentionMaps(d.attention_maps);
+
+  // ── New XAI / Reliability panels ────────────────────────────────────────
+  renderCounterfactualTests(d.counterfactual_tests);
+  renderRollingBacktest(d.rolling_backtest);
 
   // ── Changepoints ─────────────────────────────────────────────────────────
   renderChangepoints(d.prophet_sensitivity?.changepoints);
@@ -551,6 +679,126 @@ function renderAttentionKeywords(items) {
     const weight = (k.avg_attention * 100).toFixed(1);
     return `<span class="attn-keyword" title="Avg attention ${weight}% · mentions ${k.mentions}">${escHtml(k.token)} · ${weight}%</span>`;
   }).join('');
+}
+
+function renderUncertainty(u) {
+  const box = document.getElementById('uncertaintyBox');
+  if (!u) {
+    box.innerHTML = '<div class="uncertainty-row">No uncertainty diagnostics available.</div>';
+    return;
+  }
+
+  const confidencePct = Math.max(0, Math.min(100, (u.confidence || 0) * 100));
+  const action = u.actionability || 'CAUTION';
+
+  let actionClass = 'uncertainty-caution';
+  if (action === 'TRADE') actionClass = 'uncertainty-trade';
+  if (action === 'NO_TRADE') actionClass = 'uncertainty-no-trade';
+
+  const fillColor = action === 'TRADE'
+    ? 'linear-gradient(90deg, rgba(63,185,80,.75), rgba(63,185,80,.95))'
+    : action === 'NO_TRADE'
+      ? 'linear-gradient(90deg, rgba(248,81,73,.75), rgba(248,81,73,.95))'
+      : 'linear-gradient(90deg, rgba(210,153,34,.75), rgba(210,153,34,.95))';
+
+  box.innerHTML = `
+    <div class="uncertainty-row">
+      <span>Model confidence</span>
+      <span>${confidencePct.toFixed(1)}%</span>
+    </div>
+    <div class="uncertainty-bar">
+      <div class="uncertainty-bar-fill" style="width:${confidencePct.toFixed(1)}%; background:${fillColor};"></div>
+    </div>
+    <div class="uncertainty-row" style="margin-top:.45rem;">
+      <span>Recommendation</span>
+      <span class="uncertainty-badge ${actionClass}">${action.replace('_', ' ')}</span>
+    </div>
+    <div class="uncertainty-row" style="margin-top:.3rem;">
+      <span>Confidence level</span>
+      <span>${u.level || 'n/a'}</span>
+    </div>
+  `;
+}
+
+function renderCounterfactualTests(tests) {
+  const panel = document.getElementById('counterfactualPanel');
+  if (!tests || tests.length === 0) {
+    panel.innerHTML = '<p style="color:var(--muted);">No counterfactual tests available.</p>';
+    return;
+  }
+
+  panel.innerHTML = tests.map(t => {
+    const deltaCls = (t.delta || 0) >= 0 ? 'delta-pos' : 'delta-neg';
+    const deltaSign = (t.delta || 0) >= 0 ? '+' : '';
+    return `
+      <div class="counterfact-item">
+        <div class="counterfact-title">Focus token: <strong>${escHtml(t.focus_token)}</strong></div>
+        <div class="counterfact-sub">Original: ${escHtml(t.headline)}</div>
+        <div class="counterfact-sub" style="margin-top:.2rem;">Counterfactual: ${escHtml(t.counterfactual)}</div>
+        <div class="counterfact-sub" style="margin-top:.35rem;">
+          Sentiment: ${t.original_sentiment.toFixed(4)} → ${t.counterfactual_sentiment.toFixed(4)}
+          · Δ <span class="${deltaCls}">${deltaSign}${t.delta.toFixed(4)}</span>
+          ${t.polarity_flip ? '· <span class="delta-neg">Polarity flip</span>' : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderRollingBacktest(backtest) {
+  const panel = document.getElementById('backtestPanel');
+  if (!backtest || !backtest.summary || !backtest.summary.samples) {
+    panel.innerHTML = '<p style="color:var(--muted);">Not enough data for rolling backtest.</p>';
+    return;
+  }
+
+  const summary = backtest.summary;
+  const samples = summary.samples || 0;
+  const acc = summary.accuracy != null ? (summary.accuracy * 100).toFixed(1) + '%' : 'n/a';
+  const conf = summary.avg_confidence != null ? (summary.avg_confidence * 100).toFixed(1) + '%' : 'n/a';
+
+  const bucketRows = (backtest.bucket_hit_rate || []).map(b => {
+    const hit = b.hit_rate == null ? null : b.hit_rate * 100;
+    const width = hit == null ? 0 : hit;
+    const label = b.bucket === 'high' ? 'High confidence' : b.bucket === 'mid' ? 'Medium confidence' : 'Low confidence';
+    return `
+      <div class="bucket-row">
+        <div class="bucket-label">
+          <span>${label} (${b.samples || 0})</span>
+          <span>${hit == null ? 'n/a' : hit.toFixed(1) + '%'}</span>
+        </div>
+        <div class="bucket-track"><div class="bucket-fill" style="width:${width.toFixed(1)}%"></div></div>
+      </div>
+    `;
+  }).join('');
+
+  const rows = (backtest.series || []).slice(-25).reverse().map(r => {
+    const cls = r.correct ? 'sent-pos' : 'sent-neg';
+    return `
+      <tr>
+        <td>${escHtml(r.date)}</td>
+        <td>${escHtml(r.predicted)}</td>
+        <td>${escHtml(r.actual)}</td>
+        <td class="${cls}">${r.correct ? '✓' : '✗'}</td>
+        <td>${(r.confidence * 100).toFixed(1)}%</td>
+      </tr>
+    `;
+  }).join('');
+
+  panel.innerHTML = `
+    <div class="backtest-metric-grid">
+      <div class="backtest-metric"><div class="k">Samples</div><div class="v">${samples}</div></div>
+      <div class="backtest-metric"><div class="k">Accuracy</div><div class="v">${acc}</div></div>
+      <div class="backtest-metric"><div class="k">Avg Confidence</div><div class="v">${conf}</div></div>
+    </div>
+    ${bucketRows}
+    <div class="backtest-table-wrap">
+      <table class="backtest-table">
+        <thead><tr><th>Date</th><th>Pred</th><th>Actual</th><th>Hit</th><th>Conf</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 // ── Changepoints ───────────────────────────────────────────────────────────

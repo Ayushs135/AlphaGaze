@@ -13,6 +13,7 @@ re-running the full pipeline on every request.
 
 import time
 import warnings
+import re
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -349,6 +350,212 @@ def _label(ret: float) -> str:
     return "HOLD"
 
 
+def _compute_uncertainty_summary(proba: dict[str, float], latest_row: pd.DataFrame,
+                                 sentiment_score: float) -> dict:
+    """Compute confidence/uncertainty and a simple actionability recommendation."""
+    probs = np.array(list(proba.values()), dtype=float)
+    probs = np.clip(probs, 1e-12, 1.0)
+    probs = probs / probs.sum()
+
+    n_classes = len(probs)
+    entropy = float(-(probs * np.log(probs)).sum())
+    max_entropy = float(np.log(n_classes)) if n_classes > 1 else 1.0
+    entropy_norm = entropy / max_entropy if max_entropy > 0 else 0.0
+
+    sorted_probs = np.sort(probs)[::-1]
+    top_prob = float(sorted_probs[0])
+    second_prob = float(sorted_probs[1]) if n_classes > 1 else 0.0
+    margin = top_prob - second_prob
+    margin_uncertainty = 1.0 - margin
+
+    forecast_band = abs(float(latest_row["forecast_band"].iloc[0]))
+    # 4% band width is treated as high uncertainty; clipped to [0, 1].
+    forecast_uncertainty = float(np.clip(forecast_band / 0.04, 0.0, 1.0))
+
+    # Sentiment near 0 is less informative, while stronger polarity lowers uncertainty.
+    sentiment_uncertainty = float(np.clip(1.0 - min(abs(sentiment_score), 1.0), 0.0, 1.0))
+
+    uncertainty = (
+        0.45 * entropy_norm
+        + 0.25 * margin_uncertainty
+        + 0.20 * forecast_uncertainty
+        + 0.10 * sentiment_uncertainty
+    )
+    uncertainty = float(np.clip(uncertainty, 0.0, 1.0))
+    confidence = 1.0 - uncertainty
+
+    if uncertainty >= 0.67:
+        actionability = "NO_TRADE"
+    elif uncertainty >= 0.45:
+        actionability = "CAUTION"
+    else:
+        actionability = "TRADE"
+
+    confidence_level = "HIGH" if confidence >= 0.67 else "MEDIUM" if confidence >= 0.45 else "LOW"
+
+    return {
+        "score": round(uncertainty, 4),
+        "confidence": round(confidence, 4),
+        "level": confidence_level,
+        "actionability": actionability,
+        "components": {
+            "entropy": round(float(entropy_norm), 4),
+            "margin": round(float(margin_uncertainty), 4),
+            "forecast": round(float(forecast_uncertainty), 4),
+            "sentiment": round(float(sentiment_uncertainty), 4),
+        },
+    }
+
+
+def _counterfactual_headline_tests(attention_maps: list[dict], max_items: int = 3) -> list[dict]:
+    """Run lightweight counterfactual tests by removing the most-attended token."""
+    if not attention_maps:
+        return []
+
+    selected = []
+    for item in attention_maps:
+        tokens = item.get("tokens") or []
+        attention = item.get("attention") or []
+        headline = item.get("headline", "")
+        if not headline or not tokens or not attention:
+            continue
+
+        top_idx = int(np.argmax(attention))
+        focus_token = str(tokens[top_idx]).strip()
+        if not focus_token:
+            continue
+
+        pattern = re.compile(rf"\b{re.escape(focus_token)}\b", flags=re.IGNORECASE)
+        counterfactual = pattern.sub("", headline, count=1)
+        counterfactual = re.sub(r"\s+", " ", counterfactual).strip(" ,.-")
+        if not counterfactual or counterfactual == headline:
+            continue
+
+        selected.append({
+            "headline": headline,
+            "focus_token": focus_token,
+            "counterfactual": counterfactual,
+        })
+        if len(selected) >= max_items:
+            break
+
+    if not selected:
+        return []
+
+    original_texts = [x["headline"] for x in selected]
+    counterfactual_texts = [x["counterfactual"] for x in selected]
+    original_scores = _score_headlines(original_texts)
+    counterfactual_scores = _score_headlines(counterfactual_texts)
+
+    tests = []
+    for item, s0, s1 in zip(selected, original_scores, counterfactual_scores):
+        delta = float(s1 - s0)
+        tests.append({
+            "headline": item["headline"],
+            "focus_token": item["focus_token"],
+            "counterfactual": item["counterfactual"],
+            "original_sentiment": round(float(s0), 4),
+            "counterfactual_sentiment": round(float(s1), 4),
+            "delta": round(delta, 4),
+            "polarity_flip": bool((s0 > 0 and s1 < 0) or (s0 < 0 and s1 > 0)),
+        })
+
+    return tests
+
+
+def _rolling_backtest(merged_df: pd.DataFrame, n_points: int = 90, min_train: int = 40) -> dict:
+    """Run walk-forward backtest using only information available at each date."""
+    if merged_df is None or len(merged_df) < (min_train + 5):
+        return {
+            "summary": {
+                "samples": 0,
+                "accuracy": None,
+                "avg_confidence": None,
+            },
+            "series": [],
+            "bucket_hit_rate": [],
+        }
+
+    df = merged_df.sort_values("ds").reset_index(drop=True)
+    records = []
+
+    for i in range(min_train, len(df)):
+        train = df.iloc[:i]
+        test_row = df.iloc[[i]]
+
+        x_train = train[FEATURE_COLS].values
+        y_train = train["signal"].values
+        x_test = test_row[FEATURE_COLS].values
+
+        if len(np.unique(y_train)) < 2:
+            continue
+
+        clf = RandomForestClassifier(
+            n_estimators=250,
+            max_depth=6,
+            class_weight="balanced",
+            random_state=42,
+        )
+        clf.fit(x_train, y_train)
+
+        pred = str(clf.predict(x_test)[0])
+        proba = clf.predict_proba(x_test)[0]
+        confidence = float(np.max(proba))
+        actual = str(test_row["signal"].iloc[0])
+
+        records.append({
+            "date": str(test_row["ds"].iloc[0].date()),
+            "predicted": pred,
+            "actual": actual,
+            "correct": pred == actual,
+            "confidence": round(confidence, 4),
+            "next_return": round(float(test_row["next_return"].iloc[0]), 6),
+        })
+
+    if not records:
+        return {
+            "summary": {
+                "samples": 0,
+                "accuracy": None,
+                "avg_confidence": None,
+            },
+            "series": [],
+            "bucket_hit_rate": [],
+        }
+
+    records = records[-n_points:]
+    correct = np.array([1 if r["correct"] else 0 for r in records], dtype=float)
+    conf = np.array([r["confidence"] for r in records], dtype=float)
+
+    buckets = {
+        "low": (0.0, 0.50),
+        "mid": (0.50, 0.67),
+        "high": (0.67, 1.01),
+    }
+    bucket_rows = []
+    for name, (lo, hi) in buckets.items():
+        idx = [i for i, c in enumerate(conf) if lo <= c < hi]
+        if not idx:
+            bucket_rows.append({"bucket": name, "samples": 0, "hit_rate": None})
+            continue
+        hit_rate = float(np.mean(correct[idx]))
+        bucket_rows.append({
+            "bucket": name,
+            "samples": len(idx),
+            "hit_rate": round(hit_rate, 4),
+        })
+
+    return {
+        "summary": {
+            "samples": len(records),
+            "accuracy": round(float(np.mean(correct)), 4),
+            "avg_confidence": round(float(np.mean(conf)), 4),
+        },
+        "series": records,
+        "bucket_hit_rate": bucket_rows,
+    }
+
+
 def _build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values("ds").reset_index(drop=True).copy()
     df["daily_ret"]         = df["y"].pct_change()
@@ -497,6 +704,7 @@ def predict(symbol: str) -> dict:
     prophet_yhat  = float(merged.iloc[-1]["yhat"])
     latest_sent   = float(merged.iloc[-1]["sentiment_1d"])
     latest_date   = str(merged.iloc[-1]["ds"].date())
+    uncertainty_summary = _compute_uncertainty_summary(proba_dict, latest_row, latest_sent)
 
     # ── 7. BERT Attention maps for top headlines ─────────────────────────────
     # Pick the most impactful headlines (highest abs sentiment)
@@ -505,10 +713,14 @@ def predict(symbol: str) -> dict:
     print(f"[predictor] {symbol}: extracting attention maps for {len(top_headlines)} headlines …")
     attention_maps = _get_attention_maps(top_headlines, max_headlines=8)
     attention_keywords = _aggregate_attention_keywords(attention_maps, top_k=12)
+    counterfactual_tests = _counterfactual_headline_tests(attention_maps, max_items=3)
 
     # ── 8. Prophet GradCAM-like sensitivity analysis ─────────────────────────
     print(f"[predictor] {symbol}: running Prophet sensitivity analysis …")
     prophet_sensitivity = _prophet_sensitivity(prices, m, forecast, n_segments=10)
+
+    print(f"[predictor] {symbol}: running rolling backtest …")
+    rolling_backtest = _rolling_backtest(merged, n_points=90, min_train=40)
 
     result = {
         "symbol":        symbol,
@@ -519,12 +731,15 @@ def predict(symbol: str) -> dict:
         "sentiment":     round(latest_sent, 4),
         "signal":        pred_label,
         "probabilities": proba_dict,
+        "uncertainty":  uncertainty_summary,
         "shap_values":   shap_dict,
         "cv_weighted_f1": cv_f1,
         "news":          articles[:20],
         "attention_maps": attention_maps,
         "attention_keywords": attention_keywords,
+        "counterfactual_tests": counterfactual_tests,
         "prophet_sensitivity": prophet_sensitivity,
+        "rolling_backtest": rolling_backtest,
     }
 
     # Store in cache
