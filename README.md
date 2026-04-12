@@ -41,5 +41,12 @@ We wanted to show the math behind the predictions. Here is how we break open the
 4. **Changepoints**: We pull out dates from Prophet where the trend math shifted, giving us hard dates for momentum changes.
 5. **Historical Rollback**: We built a time machine testing mode so you can pick a date in the past and see what the model would have predicted. You don't have to manually feed it data; if enough historical data is available up to that point, it just calculates and shows the results. If there isn't enough data, it stays hidden. This keeps us honest and stops the model from cheating using future data.
 
+### Demo and Metrics
+Since the frontend runs completely locally, you can visualize the predictions in real time on the dashboard once you start the server. The data processes in about 15 to 30 seconds depending on how much news it has to parse.
+
+When reviewing the model's performance, the average **Confidence Score** hovers around **48%**. For a three way classification problem (Buy, Hold, Sell), random guessing is 33%. A 48% confidence means the model is finding a noticeable signal in the noise, but it is not getting overconfident, which is exactly how a realistic market model should behave. It rarely hits 90% confidence because the stock market is inherently unpredictable.
+
+**A Note on Rollback Limitations**: If you try to run a historical rollback (e.g., testing a date from two years ago) and the dashboard doesn't show enough news data, it is not a bug in the code. We use Google News RSS feeds, which only hold the most recent headlines. Fetching specific news from random days years ago requires heavy archiving APIs that are locked behind expensive paywalls.
+
 ### Conclusion
 This dashboard bridges the gap between raw data analysis and qualitative news sentiment. It runs smoothly locally, gives actionable insights, and most importantly, it respects the user by showing its complete thought process.

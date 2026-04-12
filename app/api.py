@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from predictor import predict, SUPPORTED_STOCKS
 from scraper import scrape_news
+from evaluator import evaluate_pipeline
 
 # ─────────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Stock Predictor API", version="1.0")
@@ -84,3 +85,20 @@ def get_news(symbol: str, max_articles: int = 30):
         raise HTTPException(status_code=404, detail=f"Symbol '{symbol}' not supported.")
     articles = scrape_news(symbol, max_articles=max_articles)
     return {"symbol": symbol, "articles": articles}
+
+@app.get("/api/evaluate/{symbol:path}")
+def evaluate_model(symbol: str):
+    """
+    Run an offline evaluation on the pipeline to generate metrics:
+    - Accuracy, Precision, Recall, F1 (Random Forest cross-val)
+    - Confusion Matrix
+    - Prophet MAE & RMSE
+    - Sentiment Agreement Rate (vs Dataset dummy proxy)
+    """
+    if symbol not in SUPPORTED_STOCKS:
+        raise HTTPException(status_code=404, detail=f"Symbol '{symbol}' not supported.")
+    try:
+        results = evaluate_pipeline(symbol)
+        return JSONResponse(content={"symbol": symbol, "evaluation": results})
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Evaluation error: {exc}")
