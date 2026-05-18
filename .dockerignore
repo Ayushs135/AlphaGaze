@@ -1,0 +1,78 @@
+# ---------------- GIT ----------------
+.git
+.gitignore
+
+# ---------------- PYTHON ----------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Python build files
+build/
+dist/
+*.egg-info/
+
+# ---------------- NOTEBOOKS ----------------
+.ipynb_checkpoints/
+*.ipynb
+
+# ---------------- LOGS ----------------
+*.log
+
+# ---------------- CACHE ----------------
+.cache/
+pytest_cache/
+.mypy_cache/
+
+# HuggingFace / Transformers cache
+huggingface/
+transformers_cache/
+
+# Torch cache
+torch_cache/
+
+# ---------------- DATASETS / MODELS ----------------
+data/
+datasets/
+models/
+checkpoints/
+
+# ---------------- NODE / FRONTEND ----------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Frontend build outputs
+.next/
+out/
+dist/
+build/
+
+# ---------------- VSCODE / IDE ----------------
+.vscode/
+.idea/
+
+# ---------------- OS FILES ----------------
+.DS_Store
+Thumbs.db
+
+# ---------------- DOCKER ----------------
+*.tar
+
+# ---------------- TEST FILES ----------------
+coverage/
+htmlcov/
+
+# ---------------- TEMP FILES ----------------
+tmp/
+temp/
+
+# ---------------- SQLITE ----------------
+*.db
+*.sqlite3
